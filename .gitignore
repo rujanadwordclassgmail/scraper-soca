@@ -8,3 +8,13 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment files
+.env
+
+# Local scraper outputs
+output/
+logs/
+debug/
+*.xlsx
+*.log

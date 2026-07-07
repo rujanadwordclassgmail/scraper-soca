@@ -4,18 +4,48 @@ import time
 import re
 import os
 from datetime import datetime
-from config import HEADLESS, SITIOS, URLS, EXCEL_COMBINADO, EXCEL_COMBINADO_FILENAME, MODO, DEBUG
+from config import HEADLESS, SITIOS, URLS, EXCEL_COMBINADO, EXCEL_COMBINADO_FILENAME, MODO, DEBUG, TIMING_FACTOR, LOG_DIR, OUTPUT_DIR, LOG_LEVEL, SAVE_FAILED_ROWS, EMAIL, PASSWORD
 
 
 class WorldClassScraper:
-    def __init__(self, base_url, email, password, headless=True):
+    def __init__(self, base_url, email, password, headless=True, timing_factor=1.0, log_dir=LOG_DIR, output_dir=OUTPUT_DIR):
         self.base_url = base_url
-        self.email = email
-        self.password = password
+        self.email = email or EMAIL
+        self.password = password or PASSWORD
         self.headless = headless
+        self.timing_factor = max(0.0, float(timing_factor))
+        self.log_dir = log_dir
+        self.output_dir = output_dir
         self.playwright = None
         self.browser = None
         self.page = None
+
+        os.makedirs(self.log_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def _calculate_delay(self, seconds):
+        return max(0.0, float(seconds) * self.timing_factor)
+
+    def _wait(self, seconds):
+        delay = self._calculate_delay(seconds)
+        if delay > 0:
+            time.sleep(delay)
+        return delay
+
+    def _write_log_line(self, filename, message):
+        path = os.path.join(self.log_dir, filename)
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(path, 'a', encoding='utf-8') as fh:
+            fh.write(f'[{timestamp}] {message}\n')
+
+    def log_error(self, message):
+        self._write_log_line('errors.log', f'ERROR | {message}')
+
+    def log_skip(self, message):
+        self._write_log_line('skipped_contracts.log', f'SKIP | {message}')
+
+    def log_summary(self, message):
+        self._write_log_line('run_summary.log', f'SUMMARY | {message}')
 
     # ─────────────────────────────────────────────
     # NAVEGADOR
@@ -44,7 +74,7 @@ class WorldClassScraper:
             except Exception as e:
                 if 'net::ERR_' in str(e) and intento < reintentos:
                     print(f"  ⚠ Error de red (intento {intento}/{reintentos}), esperando {espera}s...")
-                    time.sleep(espera)
+                    self._wait(espera)
                 else:
                     raise
 
@@ -64,8 +94,9 @@ class WorldClassScraper:
             print("✓ Login exitoso")
             return True
         else:
-            self.page.screenshot(path='login_error.png')
-            print("✗ Login fallido — screenshot guardado en login_error.png")
+            login_error_path = os.path.join(self.output_dir, 'screenshots', 'login_error.png')
+            self.page.screenshot(path=login_error_path)
+            print(f"✗ Login fallido — screenshot guardado en {login_error_path}")
             return False
 
     # ─────────────────────────────────────────────
@@ -76,7 +107,7 @@ class WorldClassScraper:
         # Sede — solo si está configurada
         if filtros.get('sede'):
             self.page.select_option('select#bus_sede', label=filtros['sede'])
-            time.sleep(0.3)
+            self._wait(0.3)
 
         # Fechas via JS para evitar problemas con input[type=date]
         for selector, valor in [('input#bus_f1', filtros['fecha_inicial']),
@@ -89,10 +120,10 @@ class WorldClassScraper:
                     el.dispatchEvent(new Event('change', {{bubbles: true}}));
                 }}
             }}""")
-        time.sleep(0.3)
+        self._wait(0.3)
 
         self.page.select_option('select#bus_estado', label=estado)
-        time.sleep(0.3)
+        self._wait(0.3)
 
         f1 = self.page.locator('input#bus_f1').first.input_value()
         f2 = self.page.locator('input#bus_f2').first.input_value()
@@ -111,7 +142,7 @@ class WorldClassScraper:
             print("  ⚠ No se encontró botón Buscar")
 
         self.page.wait_for_load_state('networkidle')
-        time.sleep(2)
+        self._wait(2)
 
     # ─────────────────────────────────────────────
     # RECOLECTAR URLs (con paginación por clic)
@@ -138,7 +169,8 @@ class WorldClassScraper:
                     continue
 
             if pagina == 1 and DEBUG:
-                self.page.screenshot(path=f'debug_paginacion_{estado}.png')
+                debug_path = os.path.join(self.output_dir, 'screenshots', f'debug_paginacion_{estado}.png')
+                self.page.screenshot(path=debug_path)
 
             siguiente = self.page.locator('ul.pagination li:not(.disabled) a[rel="next"]')
             if siguiente.count() == 0:
@@ -148,7 +180,7 @@ class WorldClassScraper:
             print(f"    → Navegando a página {pagina + 1}...")
             siguiente.first.click()
             self.page.wait_for_load_state('networkidle')
-            time.sleep(1.5)
+            self._wait(1.5)
             pagina += 1
 
         return urls
@@ -159,14 +191,14 @@ class WorldClassScraper:
 
     def _extraer_detalle(self, url, estado):
         self._goto(url)
-        time.sleep(1.5)
+        self._wait(1.5)
 
         datos = {}
         texto = self.page.locator('body').text_content()
 
         # Guardar HTML del primer contrato para debug (una sola vez)
         if DEBUG:
-            debug_path = f'debug_detalle_{url.split("/")[-1]}.html'
+            debug_path = os.path.join(self.output_dir, 'debug', f'debug_detalle_{url.split("/")[-1]}.html')
             if not os.path.exists(debug_path):
                 with open(debug_path, 'w', encoding='utf-8') as f:
                     f.write(self.page.content())
@@ -197,7 +229,7 @@ class WorldClassScraper:
             }''')
             datos['Numero_Contrato'] = numero or ''
             if not datos['Numero_Contrato'] and DEBUG:
-                debug_nc = f'debug_sin_numero_{url.split("/")[-1]}.html'
+                debug_nc = os.path.join(self.output_dir, 'debug', f'debug_sin_numero_{url.split("/")[-1]}.html')
                 if not os.path.exists(debug_nc):
                     with open(debug_nc, 'w', encoding='utf-8') as f:
                         f.write(self.page.content())
@@ -334,6 +366,8 @@ class WorldClassScraper:
 
         if any([datos.get('Numero_Contrato'), datos.get('Nombre_Titular'), datos.get('Cedula_Titular')]):
             return datos
+
+        self.log_skip(f"sitio={estado} | url={url} | motivo=sin datos útiles")
         return None
 
     # ─────────────────────────────────────────────
@@ -345,14 +379,16 @@ class WorldClassScraper:
             print("✗ No hay datos para exportar")
             return
 
-        if os.path.exists(filename):
+        output_path = os.path.join(self.output_dir, filename)
+
+        if os.path.exists(output_path):
             try:
-                with open(filename, 'a'):
+                with open(output_path, 'a'):
                     pass
             except PermissionError:
-                base, ext = filename.rsplit('.', 1)
-                filename = f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
-                print(f"⚠ Archivo en uso, guardando como: {filename}")
+                base, ext = os.path.splitext(output_path)
+                output_path = f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+                print(f"⚠ Archivo en uso, guardando como: {output_path}")
 
         columnas = [
             'sitio',
@@ -367,30 +403,34 @@ class WorldClassScraper:
         df = pd.DataFrame(data)
         cols = [c for c in columnas if c in df.columns]
         df = df[cols]
-        df.to_excel(filename, index=False)
-        print(f"✓ Excel guardado: {filename} ({len(df)} registros, {len(df.columns)} columnas)")
+        df.to_excel(output_path, index=False)
+        print(f"✓ Excel guardado: {output_path} ({len(df)} registros, {len(df.columns)} columnas)")
 
 
 # ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
 
-def main():
+def main(mode=MODO, headless=HEADLESS, timing_factor=TIMING_FACTOR, log_dir=LOG_DIR):
     print("=" * 60)
     print("WORLD CLASS SCRAPER - Extracción de Contratos")
     print("=" * 60)
 
-    if MODO == 'todos':
+    if mode == 'todos':
         sitios_a_procesar = SITIOS
     else:
-        sitios_a_procesar = [s for s in SITIOS if s['nombre'] == MODO]
+        sitios_a_procesar = [s for s in SITIOS if s['nombre'] == mode]
         if not sitios_a_procesar:
-            print(f"✗ Sitio '{MODO}' no encontrado en SITIOS. Verifica config.py.")
+            print(f"✗ Sitio '{mode}' no encontrado en SITIOS. Verifica config.py.")
             return
 
-    print(f"\n→ Modo: {MODO.upper()} ({len(sitios_a_procesar)} sitio(s))")
+    print(f"\n→ Modo: {mode.upper()} ({len(sitios_a_procesar)} sitio(s))")
 
     datos_globales = []
+    total_extraidos = 0
+    total_errores = 0
+    total_skips = 0
+    summary_scraper = WorldClassScraper('', '', '', timing_factor=timing_factor, log_dir=log_dir, output_dir=OUTPUT_DIR)
 
     for sitio in sitios_a_procesar:
         nombre   = sitio['nombre']
@@ -401,7 +441,15 @@ def main():
         print(f"  SITIO: {nombre.upper()}  ({base_url})")
         print(f"{'#'*60}")
 
-        scraper = WorldClassScraper(base_url, sitio['email'], sitio['password'], headless=HEADLESS)
+        scraper = WorldClassScraper(
+            base_url,
+            sitio['email'],
+            sitio['password'],
+            headless=headless,
+            timing_factor=timing_factor,
+            log_dir=log_dir,
+            output_dir=OUTPUT_DIR,
+        )
         datos_sitio = []
 
         try:
@@ -410,9 +458,10 @@ def main():
             print("\n[PASO 1] Login...")
             if not scraper.login():
                 print(f"✗ Login fallido para {nombre}, saltando sitio.")
+                scraper.log_error(f"sitio={nombre} | motivo=login fallido")
                 scraper.cerrar_navegador()
                 continue
-            time.sleep(2)
+            scraper._wait(2)
 
             for idx, estado in enumerate(filtros['estados'], 1):
                 print(f"\n{'='*60}")
@@ -420,7 +469,7 @@ def main():
                 print(f"{'='*60}")
 
                 scraper._goto(f"{base_url}{URLS['contratos']}")
-                time.sleep(1)
+                scraper._wait(1)
 
                 print("→ Aplicando filtros...")
                 scraper._aplicar_filtros_en_pagina(filtros, estado)
@@ -441,10 +490,14 @@ def main():
                             datos['sitio'] = nombre
                             datos_sitio.append(datos)
                             datos_globales.append(datos)
+                            total_extraidos += 1
                             print("  ✓ Datos extraídos")
                         else:
+                            total_skips += 1
                             print("  ⚠ Sin datos útiles")
                     except Exception as e:
+                        total_errores += 1
+                        scraper.log_error(f"sitio={nombre} | estado={estado} | url={url} | mensaje={str(e)}")
                         print(f"  ✗ Error: {str(e)}")
 
                 n = len([d for d in datos_sitio if d.get('Estado_Contrato') == estado])
@@ -461,9 +514,15 @@ def main():
     if MODO == 'todos' and EXCEL_COMBINADO and datos_globales:
         print(f"\n{'='*60}")
         print(f"→ Exportando Excel combinado ({len(datos_globales)} registros)...")
-        WorldClassScraper('', '', '').export_to_excel(datos_globales, EXCEL_COMBINADO_FILENAME)
+        WorldClassScraper('', '', '', timing_factor=TIMING_FACTOR).export_to_excel(datos_globales, EXCEL_COMBINADO_FILENAME)
+
+    summary_scraper.log_summary(
+        f"modo={mode} | extraidos={total_extraidos} | errores={total_errores} | skips={total_skips}"
+    )
 
     print(f"\n{'='*60}")
+    print(f"✓ Resumen: extraídos={total_extraidos} | errores={total_errores} | skips={total_skips}")
+    print(f"{'='*60}")
     print("✓ PROCESO COMPLETADO")
     print(f"{'='*60}")
 

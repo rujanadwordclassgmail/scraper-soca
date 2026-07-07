@@ -10,12 +10,17 @@ Script automatizado para extraer datos de contratos desde el sistema World Class
 
 ## Instalación
 
-1. Instalar las dependencias:
+### Opción recomendada con uv
+```bash
+uv sync
+```
+
+### Opción compatible con pip
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Instalar los navegadores de Playwright:
+### Instalar los navegadores de Playwright
 ```bash
 playwright install
 ```
@@ -25,9 +30,10 @@ playwright install
 Edita el archivo `config.py` para ajustar los parámetros:
 
 ### Credenciales
-```python
-EMAIL = 'admin@cronleads.com'
-PASSWORD = '0CWC.2023'
+Crea un archivo `.env` con tus credenciales:
+```env
+WORLDCLASS_EMAIL=tu_email@ejemplo.com
+WORLDCLASS_PASSWORD=tu_password
 ```
 
 ### Modo de Navegador
@@ -64,7 +70,39 @@ Si el archivo está abierto, se creará uno nuevo con timestamp: `contratos_worl
 
 ## Uso
 
-### Ejecución Básica
+### Flujo recomendado
+
+1. Instala dependencias con uv o pip.
+2. Instala Playwright.
+3. Ajusta `config.py` con los filtros y credenciales.
+4. Ejecuta el scraper desde `main.py`.
+5. Revisa los logs y el Excel generado.
+
+### Ejecución desde el punto de entrada principal
+
+```bash
+python main.py
+```
+
+### Ejecución con opciones de CLI
+
+```bash
+python main.py --mode worldclass --timing-factor 0.8
+```
+
+```bash
+python main.py --mode todos --no-headless --log-dir logs
+```
+
+### Opciones disponibles
+
+- `--mode`: `todos`, `worldclass` o `discovery`
+- `--headless`: activa el modo headless
+- `--no-headless`: muestra el navegador
+- `--timing-factor`: ajusta la velocidad del scraper
+- `--log-dir`: carpeta donde se guardan los logs
+
+### Ejecución directa del scraper
 
 ```bash
 python scraper.py
@@ -119,12 +157,17 @@ El script extrae los siguientes campos de cada contrato:
 
 El script genera:
 
-- **Excel principal**: `contratos_worldclass.xlsx` (o con timestamp si está en uso)
-- **Archivos de debug**:
-  - `contratos_sin_filtros.html`: HTML de la página sin filtros
-  - `contratos_sin_filtros.png`: Screenshot de la página sin filtros
-  - `contratos_con_filtros.html`: HTML después de aplicar filtros (modo manual)
-  - `contratos_con_filtros.png`: Screenshot después de filtros (modo manual)
+- **Excel principal** en la carpeta `output/`
+- **Logs** en la carpeta `logs/`:
+  - `errors.log`
+  - `skipped_contracts.log`
+  - `run_summary.log`
+- **Archivos de depuración** en `output/debug/`:
+  - HTML de detalle de contratos
+  - HTML cuando no se encuentra el número de contrato
+- **Capturas de pantalla** en `output/screenshots/`:
+  - errores de login
+  - capturas de paginación y depuración
 
 ## Ejemplos de Uso
 
@@ -132,15 +175,10 @@ El script genera:
 ```python
 # En config.py
 HEADLESS = True
-FILTROS = {
-    'sede': 'WCG - GUAYAQUIL',
-    'fecha_inicial': '2024-01-01',
-    'fecha_final': '2026-03-22',
-    'estados': ['PROCE', 'CERO', 'GASTO LEGAL', 'SEPACACION', 'PEDDING']
-}
+TIMING_FACTOR = 0.8
 ```
 ```bash
-python scraper.py
+python main.py --mode worldclass --timing-factor 0.8
 ```
 
 ### Extracción Manual (con visualización)
@@ -149,9 +187,7 @@ python scraper.py
 HEADLESS = False
 ```
 ```bash
-python scraper.py
-# El navegador se abrirá y esperará a que apliques los filtros manualmente
-# Presiona ENTER en la consola cuando hayas terminado
+python main.py --mode worldclass --no-headless
 ```
 
 ### Extracción de un Solo Estado
