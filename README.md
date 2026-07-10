@@ -1,239 +1,182 @@
-# World Class Scraper - Extractor de Contratos
+# World Class Scraper
 
-Script automatizado para extraer datos de contratos desde el sistema World Class y exportarlos a Excel.
+Automatiza la extracción de contratos desde las plataformas World Class y Discovery y los exporta a CSV o Excel.
 
-## Requisitos
+## Inicio rápido
 
-- Python 3.8 o superior
-- Conexión a internet
-- Credenciales de acceso al sistema World Class
-
-## Instalación
-
-### Opción recomendada con uv
 ```bash
 uv sync
+uv run playwright install
+cp .env.example .env   # rellena tus credenciales
+uv run python main.py
 ```
 
-### Opción compatible con pip
-```bash
-pip install -r requirements.txt
-```
+## Estructura del proyecto
 
-### Instalar los navegadores de Playwright
-```bash
-playwright install
+```
+scrapping/
+├── main.py                          # Punto de entrada (thin wrapper sobre cli)
+├── scripts/
+│   └── explore_site.py              # Herramienta de diagnóstico / exploración
+├── src/worldclass_scraper/
+│   ├── cli.py                       # Parser de argumentos CLI
+│   ├── config.py                    # Configuración leída desde .env
+│   ├── scraper.py                   # Orquestador principal
+│   └── modules/
+│       ├── auth.py                  # Login y gestión de sesión
+│       ├── browser.py               # Ciclo de vida del navegador Playwright
+│       ├── concurrency.py           # Control adaptativo de concurrencia
+│       ├── exporters.py             # AbstractExporter, ExcelExporter, ExportOrchestrator
+│       ├── extractors.py            # Extracción de campos de cada contrato
+│       ├── filters.py               # Aplicación de filtros y paginación
+│       ├── logging.py               # Logger estructurado a archivo
+│       ├── progress.py              # Barra de progreso en consola
+│       ├── retry.py                 # Política de reintentos con backoff exponencial
+│       ├── audit.py                 # Análisis post-ejecución de logs
+│       └── utils.py                 # Utilidades: slugify, constantes ANSI
+├── tests/                           # Suite de pruebas unitarias (183 tests)
+└── docs/                            # Documentación adicional
 ```
 
 ## Configuración
 
-Edita el archivo `config.py` para ajustar los parámetros:
+La única fuente de verdad para parámetros de entorno es `.env`. Copia el ejemplo y edítalo:
 
-### Credenciales
-Crea un archivo `.env` con tus credenciales:
+```bash
+cp .env.example .env
+```
+
+Parámetros de credenciales (obligatorios):
+
 ```env
 WORLDCLASS_EMAIL=tu_email@ejemplo.com
 WORLDCLASS_PASSWORD=tu_password
+DISCOVERY_EMAIL=tu_email@ejemplo.com
+DISCOVERY_PASSWORD=tu_password
 ```
 
-### Modo de Navegador
-```python
-HEADLESS = True   # True = modo oculto (automático)
-                  # False = ver navegador en tiempo real
+Parámetros de entorno/infraestructura (opcionales, con defaults razonables):
+
+```env
+CONCURRENCY=4                  # workers paralelos
+PAGE_NAVIGATION_TIMEOUT=40000  # ms
+PAGE_ACTION_TIMEOUT=20000      # ms
+PAGE_READY_STATE_TIMEOUT=15000 # ms
+TIMING_FACTOR=1.0              # multiplica todos los delays
+EXPORT_CSV=true
+EXPORT_XLSX=false
+AUTO_REDUCE_ON_ERRORS=true     # reduce concurrencia al detectar errores
+AUTO_RECOVERY=true             # recupera concurrencia cuando se estabiliza
 ```
 
-- **HEADLESS = True**: El script aplica todos los filtros automáticamente sin mostrar el navegador
-- **HEADLESS = False**: Muestra el navegador y espera a que apliques los filtros manualmente
+> Los parámetros de comportamiento por ejecución (qué extraer, cuántos contratos) van en CLI, no en `.env`.
 
-### Filtros de Búsqueda
-```python
-FILTROS = {
-    'sede': 'WCG - GUAYAQUIL',
-    'fecha_inicial': '2024-01-01',  # Formato: YYYY-MM-DD
-    'fecha_final': '2026-03-22',
-    'estados': [
-        'PROCE',
-        'CERO',
-        'GASTO LEGAL',
-        'SEPACACION',
-        'PEDDING'
-    ]
-}
+## CLI — flags disponibles
+
+```
+--mode          worldclass | discovery | todos  (default: todos)
+--sede          Sede a procesar (default: la configurada en .env)
+--estado        Estado a extraer. Sin valor: procesa todos
+--limit N       Máximo de contratos por estado. 0 = todos (default: 0)
+--csv           Exportar a CSV
+--xlsx          Exportar a Excel
+--timing-factor Float que multiplica los delays solo para esta ejecución
+--no-headless   Mostrar el navegador (útil para depurar)
+--check-server  Verificar si el servidor responde antes de arrancar
+--contract-url  URL de un contrato específico para extracción directa
+--output-dir    Directorio de salida (default: output/<mode>)
+--log-dir       Directorio de logs  (default: logs/<mode>)
 ```
 
-### Archivo de Salida
-```python
-EXCEL_FILENAME = 'contratos_worldclass.xlsx'
-```
-
-Si el archivo está abierto, se creará uno nuevo con timestamp: `contratos_worldclass_YYYYMMDD_HHMMSS.xlsx`
-
-## Uso
-
-### Flujo recomendado
-
-1. Instala dependencias con uv o pip.
-2. Instala Playwright.
-3. Ajusta `config.py` con los filtros y credenciales.
-4. Ejecuta el scraper desde `main.py`.
-5. Revisa los logs y el Excel generado.
-
-### Ejecución desde el punto de entrada principal
+## Ejemplos de uso
 
 ```bash
-python main.py
+# Extracción completa de WorldClass
+uv run python main.py --mode worldclass
+
+# Solo una sede y estado, con límite
+uv run python main.py --mode worldclass --sede 'WCG - GUAYAQUIL' --estado CASH --limit 500
+
+# Exportar a CSV y Excel, navegador visible
+uv run python main.py --mode worldclass --csv --xlsx --no-headless
+
+# Extraer un contrato directamente
+uv run python main.py --mode worldclass --contract-url https://worldclass.systemsoca.com/vercontrato/1234
+
+# Ajustar velocidad de navegación
+uv run python main.py --mode worldclass --timing-factor 0.8
 ```
 
-### Ejecución con opciones de CLI
+## Salidas
 
-```bash
-python main.py --mode worldclass --timing-factor 0.8
-```
+- CSV / Excel en `output/<mode>/<sede-slug>/reports/`
+- Logs en `logs/<mode>/errors.log` y `logs/<mode>/run_summary.log`
+- Capturas de depuración en `output/<mode>/debug/` y `output/<mode>/screenshots/`
 
-```bash
-python main.py --mode todos --no-headless --log-dir logs
-```
+## Esquema de columnas exportadas
 
-### Opciones disponibles
+| Columna | Descripción |
+|---|---|
+| `Sede` | Sede canónica normalizada (`WCG - GUAYAQUIL`, etc.) |
+| `Estado_Contrato` | Estado normalizado (`PROCE`, `CASH`, `CERO`, `GASTO LEGAL`, `SEPARACION`, `PEDDING`) |
+| `Numero_Contrato` | Identificador del contrato |
+| `Fecha_Creacion` | Fecha de creación |
+| `Nombre_Titular`, `Apellido_Titular`, `Cedula_Titular`, `Celular_Titular`, `Email_Titular` | Datos del titular |
+| `Nombre_Cotitular`, `Apellido_Cotitular`, `Cedula_Cotitular`, `Celular_Cotitular`, `Email_Cotitular` | Datos del cotitular |
+| `Valor_Contrato`, `Cuota_Inicial`, `Pago_Inicial` | Valores económicos |
+| `Cuotas_Saldo_Inicial`, `Fecha_Primer_Pago_Inicial` | Saldo inicial |
+| `Cuotas_Saldo_Restante`, `Fecha_Primer_Pago_Restante` | Saldo restante |
+| `Comentario` | Texto de comentario extraído |
 
-- `--mode`: `todos`, `worldclass` o `discovery`
-- `--headless`: activa el modo headless
-- `--no-headless`: muestra el navegador
-- `--timing-factor`: ajusta la velocidad del scraper
-- `--log-dir`: carpeta donde se guardan los logs
+## Análisis de logs
 
-### Ejecución directa del scraper
-
-```bash
-python scraper.py
-```
-
-### Proceso de Extracción
-
-El script realiza los siguientes pasos:
-
-1. **Inicio de sesión**: Conecta al sistema con las credenciales configuradas
-2. **Navegación**: Accede a la página de contratos
-3. **Aplicación de filtros**: 
-   - Modo automático (HEADLESS=True): Aplica todos los filtros configurados
-   - Modo manual (HEADLESS=False): Espera a que apliques los filtros
-4. **Extracción de datos**: Procesa cada contrato y extrae todos los campos
-5. **Exportación**: Guarda los datos en Excel
-
-## Datos Extraídos
-
-El script extrae los siguientes campos de cada contrato:
-
-### Información General
-- **Numero_Contrato**: Código del contrato (ej: WCG4394)
-- **Fecha_Creacion**: Fecha en formato dd/mm/aa
-- **Estado_Contrato**: Estado actual (PROCE, CERO, etc.)
-
-### Datos del Titular
-- **Nombre_Titular**
-- **Apellido_Titular**
-- **Cedula_Titular**
-- **Celular_Titular**
-- **Email_Titular**
-
-### Datos del Cotitular
-- **Nombre_Cotitular**
-- **Apellido_Cotitular**
-- **Cedula_Cotitular**
-- **Celular_Cotitular**
-- **Email_Cotitular**
-
-### Detalles Financieros
-- **Valor_Contrato**: Valor total del contrato
-- **Cuota_Inicial**: Monto de la cuota inicial
-- **Pago_Inicial**: Total del pago inicial
-- **Cuotas_Saldo_Inicial**: Número de cuotas para financiar saldo inicial
-- **Cuotas_Saldo_Restante**: Número de cuotas para financiar saldo restante
-
-### Adicional
-- **url**: URL del detalle del contrato
-
-## Salida
-
-El script genera:
-
-- **Excel principal** en la carpeta `output/`
-- **Logs** en la carpeta `logs/`:
-  - `errors.log`
-  - `skipped_contracts.log`
-  - `run_summary.log`
-- **Archivos de depuración** en `output/debug/`:
-  - HTML de detalle de contratos
-  - HTML cuando no se encuentra el número de contrato
-- **Capturas de pantalla** en `output/screenshots/`:
-  - errores de login
-  - capturas de paginación y depuración
-
-## Ejemplos de Uso
-
-### Extracción Automática Completa
 ```python
-# En config.py
-HEADLESS = True
-TIMING_FACTOR = 0.8
+from worldclass_scraper.modules.audit import audit_logs, format_report
+
+report = audit_logs('logs/worldclass')
+print(format_report(report))
 ```
+
+Ejemplo de salida:
+
+```
+=== AUDIT REPORT ===
+
+[ERRORS]
+  timeout_extract             : 95
+  retry_goto                  : 12
+  retry_extract               : 8
+  context_closed              : 3
+  extract_failed              : 2
+
+[RUN_SUMMARY]
+  concurrency_reduced         : 4
+  concurrency_recovered       : 2
+
+[TOTALS]
+  total_errors                : 120
+  total_retries               : 20
+```
+
+## Tests
+
 ```bash
-python main.py --mode worldclass --timing-factor 0.8
+uv run pytest -q
 ```
 
-### Extracción Manual (con visualización)
-```python
-# En config.py
-HEADLESS = False
-```
+183 tests unitarios cubriendo todos los módulos del paquete.
+
+## Dependencias
+
+Gestionadas exclusivamente con `uv`. No editar `requirements.txt` manualmente — `pyproject.toml` es la fuente de verdad.
+
 ```bash
-python main.py --mode worldclass --no-headless
+uv sync                         # instalar dependencias
+uv run playwright install       # instalar Chromium
+uv lock --no-update             # actualizar lockfile sin subir versiones
 ```
 
-### Extracción de un Solo Estado
-```python
-# En config.py
-FILTROS = {
-    'sede': 'WCG - GUAYAQUIL',
-    'fecha_inicial': '2024-01-01',
-    'fecha_final': '2026-03-22',
-    'estados': ['PROCE']  # Solo un estado
-}
-```
+## Documentación adicional
 
-## Solución de Problemas
-
-### El script no inicia
-- Verifica que Playwright esté instalado: `playwright install`
-- Verifica las dependencias: `pip install -r requirements.txt`
-
-### Error de credenciales
-- Verifica EMAIL y PASSWORD en `config.py`
-- Asegúrate de tener acceso al sistema
-
-### No se extraen datos
-- Revisa los archivos HTML y PNG generados para debug
-- Verifica que los filtros sean correctos
-- Intenta con HEADLESS=False para ver qué sucede
-
-### El archivo Excel no se guarda
-- Cierra el archivo Excel si está abierto
-- El script creará uno nuevo con timestamp automáticamente
-
-### El proceso es muy lento
-- Es normal, el script procesa cada contrato individualmente
-- Para muchos contratos, puede tomar varios minutos
-
-## Notas Importantes
-
-- El script respeta los tiempos de carga de la página para evitar errores
-- Si un contrato falla, continúa con el siguiente
-- Los datos se guardan al final del proceso completo
-- Puedes interrumpir el script con Ctrl+C si es necesario
-
-## Soporte
-
-Para problemas o dudas, revisa:
-1. Los archivos de debug generados (HTML y PNG)
-2. Los mensajes en la consola durante la ejecución
-3. La configuración en `config.py`
+- [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)

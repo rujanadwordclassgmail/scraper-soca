@@ -1,25 +1,19 @@
 import os
-import re
-import unittest
+import tomllib
 
 
-class RequirementsTests(unittest.TestCase):
-    def test_required_packages_are_declared(self):
-        root = os.path.dirname(os.path.dirname(__file__))
-        requirements_path = os.path.join(root, 'requirements.txt')
+def test_project_declares_required_dependencies():
+    root = os.path.dirname(os.path.dirname(__file__))
+    pyproject = os.path.join(root, 'pyproject.toml')
+    assert os.path.exists(pyproject), 'pyproject.toml no encontrado'
 
-        self.assertTrue(os.path.exists(requirements_path), 'requirements.txt no encontrado')
+    with open(pyproject, 'rb') as fh:
+        data = tomllib.load(fh)
+    deps = data.get('project', {}).get('dependencies', []) or []
+    normalized = [d.split('>=')[0].split('>')[0].split('<')[0].strip().lower() for d in deps]
 
-        with open(requirements_path, 'r', encoding='utf-8') as fh:
-            content = fh.read().lower()
-
-        required_packages = ['playwright', 'pandas', 'openpyxl', 'beautifulsoup4']
-        for package in required_packages:
-            self.assertTrue(
-                any(re.match(rf'^{re.escape(package)}([<>=!~].*)?$', line.strip()) for line in content.splitlines()),
-                f'El paquete {package} no está declarado en requirements.txt'
-            )
+    required_packages = ['playwright', 'pandas', 'openpyxl']
+    for package in required_packages:
+        assert package in normalized, f'El paquete {package} no está declarado en pyproject.toml'
 
 
-if __name__ == '__main__':
-    unittest.main()

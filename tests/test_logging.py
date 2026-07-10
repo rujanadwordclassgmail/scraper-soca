@@ -1,22 +1,23 @@
 import os
+import sys
 import tempfile
-import unittest
+from pathlib import Path
 
-from scraper import WorldClassScraper
+ROOT = Path(__file__).resolve().parent.parent
+SRC = ROOT / 'src'
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-
-class LoggingTests(unittest.TestCase):
-    def test_write_log_line_creates_file_and_writes_message(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            scraper = WorldClassScraper("https://example.com", "user", "pass", log_dir=tmpdir)
-            scraper._write_log_line("errors.log", "hello world")
-
-            log_path = os.path.join(tmpdir, "errors.log")
-            self.assertTrue(os.path.exists(log_path))
-            with open(log_path, "r", encoding="utf-8") as fh:
-                content = fh.read()
-            self.assertIn("hello world", content)
+from worldclass_scraper.modules.logging import ScraperLogger
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_write_log_line_creates_file_and_writes_message():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        logger = ScraperLogger(tmpdir)
+        logger.write("errors.log", "hello world")
+
+        log_path = os.path.join(tmpdir, "errors.log")
+        assert os.path.exists(log_path)
+        with open(log_path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+        assert "hello world" in content
